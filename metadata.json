@@ -1,0 +1,8 @@
+{
+  "name": "HotPot Exercise Maker v2.0",
+  "description": "AI-powered generator for complete Moodle HotPot \u0026 TaskChain HTML quiz packages from PDF or DOCX English exercises with authentic Hot Potatoes 6 engine.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
