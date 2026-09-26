@@ -32,6 +32,93 @@ const getGeminiClient = () => {
   });
 };
 
+// Fallback models for resilience against temporary 503 / high demand spikes
+const FALLBACK_MODELS = [
+  'gemini-3.8-flash',
+  'gemini-flash-latest',
+  'gemini-3.1-flash-lite',
+];
+
+function isTransientOrHighDemandError(err: any): boolean {
+  if (!err) return false;
+  const msg = typeof err === 'string' ? err : `${err.message || ''} ${err.status || ''} ${JSON.stringify(err.error || '')}`;
+  const code = err.status || err.code || err.error?.code || err.error?.status;
+  if (code === 503 || code === 429 || code === 'UNAVAILABLE' || code === 'RESOURCE_EXHAUSTED') {
+    return true;
+  }
+  return (
+    msg.includes('503') ||
+    msg.includes('429') ||
+    msg.includes('high demand') ||
+    msg.includes('UNAVAILABLE') ||
+    msg.includes('RESOURCE_EXHAUSTED') ||
+    msg.includes('Spikes in demand') ||
+    msg.includes('overloaded') ||
+    msg.includes('temporarily unavailable') ||
+    msg.includes('try again later') ||
+    msg.includes('ECONNRESET') ||
+    msg.includes('ETIMEDOUT')
+  );
+}
+
+function formatErrorMessage(err: any): string {
+  if (!err) return 'Unknown error occurred while contacting AI service';
+  let rawMsg = typeof err === 'string' ? err : err.message || '';
+  try {
+    const parsed = JSON.parse(rawMsg);
+    if (parsed.error?.message) {
+      rawMsg = parsed.error.message;
+    }
+  } catch {}
+
+  if (isTransientOrHighDemandError(err) || rawMsg.includes('high demand')) {
+    return 'The AI service is experiencing temporary high demand across model clusters. Automatic retries were attempted. Please try again in a moment.';
+  }
+  return rawMsg || 'Failed to process request with AI service';
+}
+
+async function generateContentWithFallback(
+  ai: GoogleGenAI,
+  requestParams: any,
+  preferredModel: string = 'gemini-3.8-flash'
+) {
+  const modelsToTry = [
+    preferredModel,
+    ...FALLBACK_MODELS.filter((m) => m !== preferredModel),
+  ];
+
+  let lastError: any = null;
+
+  for (let modelIdx = 0; modelIdx < modelsToTry.length; modelIdx++) {
+    const currentModel = modelsToTry[modelIdx];
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        const response = await ai.models.generateContent({
+          ...requestParams,
+          model: currentModel,
+        });
+        return response;
+      } catch (err: any) {
+        lastError = err;
+        console.warn(
+          `Gemini request failed on ${currentModel} (attempt ${attempt}/2):`,
+          err?.message || err
+        );
+
+        if (isTransientOrHighDemandError(err)) {
+          const delayMs = attempt * 1200 + Math.floor(Math.random() * 500);
+          await new Promise((resolve) => setTimeout(resolve, delayMs));
+        } else {
+          // If not a transient high-demand error, break attempt loop and try next model
+          break;
+        }
+      }
+    }
+  }
+
+  throw lastError;
+}
+
 // Health check
 app.get('/api/health', (req: Request, res: Response) => {
   res.json({
@@ -67,8 +154,7 @@ app.post('/api/parse-pdf', async (req: Request, res: Response) => {
     }
 
     const ai = getGeminiClient();
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+    const response = await generateContentWithFallback(ai, {
       contents: [
         {
           role: 'user',
@@ -91,7 +177,7 @@ app.post('/api/parse-pdf', async (req: Request, res: Response) => {
     res.json({ success: true, text, filename });
   } catch (error: any) {
     console.error('Error parsing PDF:', error);
-    res.status(500).json({ error: error.message || 'Failed to parse PDF document with Gemini' });
+    res.status(500).json({ error: formatErrorMessage(error) });
   }
 });
 
@@ -364,8 +450,7 @@ Requirements:
       }
     }
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+    const response = await generateContentWithFallback(ai, {
       contents: [{ role: 'user', parts: userParts }],
       config: {
         systemInstruction,
@@ -380,7 +465,7 @@ Requirements:
     res.json({ success: true, data: parsedData });
   } catch (error: any) {
     console.error('Error generating HotPot project with Gemini:', error);
-    res.status(500).json({ error: error.message || 'Failed to generate exercises with Gemini' });
+    res.status(500).json({ error: formatErrorMessage(error) });
   }
 });
 
@@ -411,8 +496,7 @@ ${JSON.stringify(page, null, 2)}
 
 ${sourceContext ? `SOURCE CONTEXT:\n${sourceContext}` : ''}`;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-3.8-flash',
+    const response = await generateContentWithFallback(ai, {
       contents: promptText,
       config: {
         systemInstruction,
@@ -426,7 +510,7 @@ ${sourceContext ? `SOURCE CONTEXT:\n${sourceContext}` : ''}`;
     res.json({ success: true, page: parsed });
   } catch (error: any) {
     console.error('Error repairing exercise with Gemini:', error);
-    res.status(500).json({ error: error.message || 'Failed to repair exercise' });
+    res.status(500).json({ error: formatErrorMessage(error) });
   }
 });
 

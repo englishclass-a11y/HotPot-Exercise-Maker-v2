@@ -319,7 +319,12 @@ export default function App() {
       setActiveTab('studio');
     } catch (err: any) {
       console.error('AI Generation Error:', err);
-      setAiError(err.message || 'AI generation failed. Please ensure GEMINI_API_KEY is configured.');
+      let errorMsg = err.message || 'AI generation failed. Please ensure GEMINI_API_KEY is configured.';
+      try {
+        const parsed = JSON.parse(errorMsg);
+        if (parsed.error?.message) errorMsg = parsed.error.message;
+      } catch {}
+      setAiError(errorMsg);
     } finally {
       setIsAiGenerating(false);
     }
@@ -842,9 +847,19 @@ export default function App() {
 
             {/* Action Bar */}
             {aiError && (
-              <div className="bg-rose-50 border border-rose-200 text-rose-800 p-3 rounded-md text-xs flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />
-                <span>{aiError}</span>
+              <div className="bg-rose-50 border border-rose-200 text-rose-800 p-3.5 rounded-lg text-xs flex flex-wrap items-center justify-between gap-3 shadow-sm">
+                <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                  <AlertTriangle className="w-4 h-4 shrink-0 text-rose-600" />
+                  <span className="font-medium break-words">{aiError}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={handleRunAiSolve}
+                  disabled={isAiGenerating}
+                  className="bg-rose-700 hover:bg-rose-800 disabled:opacity-50 text-white font-bold px-3 py-1.5 rounded text-xs transition shrink-0 cursor-pointer"
+                >
+                  {isAiGenerating ? 'Retrying...' : 'Retry Now'}
+                </button>
               </div>
             )}
 
